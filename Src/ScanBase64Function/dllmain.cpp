@@ -2,7 +2,6 @@
 #include "plugin.h"
 #include <tlhelp32.h>
 #include <stdlib.h>
-#include "BoyerMoore.h"
 #include "Signature.h"
 
 HANDLE g_hInstance; // DLL 인스턴스
@@ -55,23 +54,49 @@ EXIT_ERROR:
 	
 }
 
-void ScanTable(PBYTE pbBaseAddr, DWORD dwModSize, char* szExePath)
+size_t Search(IN BYTE* pbBuffer, IN size_t BufSize, IN size_t Offset, IN BYTE* pbCode, IN size_t SigSize)
 {
+	size_t ret = (size_t)-1;
+	size_t i = 0;
+	for (i = Offset; i <= BufSize - SigSize; i++)
+	{
+		size_t j = 0;
+		for (j = 0; j < SigSize; j++)
+		{
+			if ((pbBuffer[i + j] != pbCode[j]) && (0x91 != pbCode[j]))
+			{
+				// 일치하지 않으면 j의 증가를 멈춤
+				break;
+			}
 
-	CBoyerMoore bm;
+		}
+		if (j == SigSize)
+		{
+			ret = i;
+			break;
+		}
+	}
+
+	return ret;
+}
+
+
+void ScanTable(PBYTE pbBaseAddr, DWORD dwModSize, char* szExePath)
+{	
 	PBYTE pbMemBuffer = NULL;
 	pbMemBuffer = (PBYTE)malloc(dwModSize);
 	_Readmemory(pbMemBuffer, (DWORD)pbBaseAddr, dwModSize, MM_RESTORE | MM_SILENT);
-	DWORD dwOffset = 0;
+	
 
 	// 시그내처 갯수
 	int nSigCount = sizeof(stSignature) / sizeof(stSignature[0]);
 
 	for (int i = 0; i < nSigCount; i++)
 	{
+		DWORD dwOffset = 0;
 		do
 		{
-			int nOffset = bm.Search(pbMemBuffer, dwModSize, dwOffset, stSignature[i].pbCode, stSignature[i].dwSize);
+			int nOffset = Search(pbMemBuffer, dwModSize, dwOffset, stSignature[i].pbCode, stSignature[i].dwSize);
 			// 찾을 수 없다면
 			if (nOffset == -1)
 			{
@@ -79,7 +104,20 @@ void ScanTable(PBYTE pbBaseAddr, DWORD dwModSize, char* szExePath)
 			}
 			_Addtolist(0, 1, "[Found] 0x%08x %s ", pbBaseAddr, szExePath);
 			_Addtolist(0, 1, "[%s] 0x%08x ", stSignature[i].pszName, (DWORD)pbBaseAddr + nOffset);
-			ScanCodeViaAddr(pbBaseAddr, pbMemBuffer, (DWORD)pbBaseAddr + nOffset);
+			if (stSignature[i].code == 0)
+			{
+				ScanCodeViaAddr(pbBaseAddr, pbMemBuffer, (DWORD)pbBaseAddr + nOffset);
+			}
+			else
+			{				
+				// 코드인경우 disasm 해서 보여준다.
+				unsigned char cmd[MAXCMDSIZE] = { 0, }; // 한줄 읽기
+				t_disasm da;
+				_Readmemory(cmd, (DWORD)pbBaseAddr + nOffset, MAXCMDSIZE, MM_RESTORE | MM_SILENT);
+				_Disasm(cmd, MAXCMDSIZE, (DWORD)pbBaseAddr + nOffset, NULL, &da, DISASM_CODE, 0);
+				_Addtolist(0, 0, "Code Addr : 0x%08x %s", (DWORD)pbBaseAddr + nOffset, da.result);
+			}
+			
 			dwOffset = nOffset + 1;
 		} while (dwOffset < dwModSize);
 	}
@@ -128,7 +166,7 @@ extc int _export cdecl ODBG_Plugininit(int OllyVersion, HWND hWnd, ulong *featur
 	g_hWndOlly = hWnd;
 
 
-	_Addtolist(0, 1, "Scan Base64 Function v1.0");
+	_Addtolist(0, 1, "Scan Base64 Function v1.5");
 	_Addtolist(0, 0, "written By Codetronik / http://codetronik.tistory.com");
 	
 	return 0;
